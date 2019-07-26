@@ -1,0 +1,592 @@
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; initialization methods
+to initializeParametersMethod
+  ;; landscape parameters
+  set totalPatchesLandscape count(patches)
+  set totalSNHPatches precision (totalPatchesLandscape * proportionSNHPatches / 100) 0 ; precision => integer
+  set totalCropPatches (totalPatchesLandscape - totalSNHPatches)
+  
+  ifelse cropsNumber = 1 [
+    set orderCrops (list 1)
+    set proportionCrops (list (100 - proportionSNHPatches))
+    splitSensibilityFrames
+    set cropsInfectionrates (split infectionRates)
+    set cropsInfectionrates replace-item 0 cropsInfectionrates (item 0 cropsInfectionrates / 10)
+    set totalCiPatches (list totalCropPatches)
+    
+    let tempo (item 0 cropsInfectionrates) * (item 0 totalCiPatches) / 100
+    ifelse tempo = 0 [
+      set nbOfCiToInfectPerTick (list 0)
+      set infectionFrequency (list 0)
+      set theoreticalNbFinallyInfectedCrops (list 0)
+    ][
+      ifelse tempo < 1 [
+        set nbOfCiToInfectPerTick (list 1)
+        set infectionFrequency (list round (1 / tempo))
+        set theoreticalNbFinallyInfectedCrops (list min(list (item 0 totalCiPatches) (round (150 / round (1 / tempo) ))))
+      ][
+        set nbOfCiToInfectPerTick (list floor (tempo))
+        set infectionFrequency (list 1)
+        set theoreticalNbFinallyInfectedCrops (list min(list (item 0 totalCiPatches) (150 * round( tempo ))))
+    ]]
+    
+  ][
+  
+  ; transformation des strings en liste d'entiers  
+  ifelse behaviorSpace = "crop_prop_fixed"
+  [
+    set proportionCrops n-values cropsNumber [precision ((100 - proportionSNHPatches) / cropsNumber) 1]
+    let liste ""
+    (foreach but-last proportionCrops
+      [[x]->
+        set liste (word liste (precision x 0) "-")
+      ])
+    set proportionCropsPatches liste
+  ]
+  [
+    set proportionCrops split proportionCropsPatches
+    set proportionCrops replace-item  (cropsNumber - 1)  proportionCrops (100 - sum proportionCrops - proportionSNHPatches) ; calcul manuel du % de la derniere crop, sors une liste de nombres
+  ]
+ 
+  set orderCrops split cropsOrder 
+  splitSensibilityFrames ; return the sensibility frame list: [[0 50] [33 120] [40 150]]
+  
+  set cropsInfectionrates (split infectionRates) ; transforme le string en liste de nombre
+  (foreach cropsInfectionrates range cropsNumber ; divise par 10 l'infection rate pour avoir le pourcentage réel. (le string peut ainsi être directement utilisé pour les noms des files (pas de .))
+  [[x y ]->
+    set cropsInfectionrates replace-item y cropsInfectionrates (precision (x / 10) 2)
+  ])
+  
+  
+  set totalCiPatches (list) ; calcul du nb de patches par culture, sors sous la forme d'une liste d'entiers
+  foreach proportionCrops 
+  [
+    element -> set totalCiPatches lput( precision (element / 100 * totalPatchesLandscape) 0 ) totalCiPatches
+  ]
+  if sum totalCiPatches > totalCropPatches [
+    set totalCiPatches replace-item (cropsNumber - 1 ) totalCiPatches (totalCropPatches - sum but-last totalCiPatches)
+  ]
+  
+  ; pest dynamic variables
+  set nbOfCiToInfectPerTick (list)
+  set infectionFrequency (list)
+  set theoreticalNbFinallyInfectedCrops (list)
+  (foreach cropsInfectionrates totalCiPatches  sensibilityframes
+    [
+      [x y z] -> 
+      let tempo x * y / 100 ; nombre de patches à infecter à chaque tick
+      let lengthframe (item 1 z) - (item 0 z ) + 1
+      ifelse tempo = 0
+      [
+        set nbOfCiToInfectPerTick fput 0 nbOfCiToInfectPerTick
+        set infectionFrequency fput round 0 infectionFrequency
+        set theoreticalNbFinallyInfectedCrops fput 0 theoreticalNbFinallyInfectedCrops
+      ]
+      [
+       ifelse tempo < 1
+       [; on infecte un patch tous les n ticks (défini par infection-pattern-frequency = n)
+         set nbOfCiToInfectPerTick fput 1 nbOfCiToInfectPerTick
+         set infectionFrequency fput round (1 / tempo) infectionFrequency
+       ]
+       [; on infecte n patchs tous les ticks (infection-pattern-frequency = 1)
+         set nbOfCiToInfectPerTick fput floor (tempo) nbOfCiToInfectPerTick;; attention ici on arrondi à 0 ça peut amener à un mauvais nb de patches infecté à la fin
+         set infectionFrequency fput 1 infectionFrequency
+       ]
+       set theoreticalNbFinallyInfectedCrops fput (min (list y (precision (lengthframe * tempo) 0))) theoreticalNbFinallyInfectedCrops
+      ]
+
+    ] )
+  
+  set nbOfCiToInfectPerTick reverse nbOfCiToInfectPerTick
+  set infectionFrequency reverse infectionFrequency
+  set theoreticalNbFinallyInfectedCrops reverse theoreticalNbFinallyInfectedCrops
+  ]
+  ; ability to detect attractive crop patches 
+  if abilityToDetectAttractiveCrops = 9 [ set detectionRadius 1.5 ]
+  if abilityToDetectAttractiveCrops = 25 [ set detectionRadius 2.9 ]
+  if abilityToDetectAttractiveCrops = 49 [ set detectionRadius 4 ]
+  
+  ; indicators
+  initializeOutputCountersMethod
+end
+
+to initializePatchesMethod
+  
+  ask patches
+  [
+    ;;; status
+    
+    set state 0
+    set nextState 0
+    
+    set predatorPresence FALSE
+    
+    
+    ;;; dynamic
+
+    set infectionDate FALSE
+    
+    set lengthLatentPeriod FALSE 
+    
+    set datePredatorArrival FALSE
+    set firstPredatorArrived FALSE
+    set birthYearOfMyPredator 0
+    set timeForCropLoss "NA"
+    
+    set durationBeforeEggs FALSE 
+    set nbTicksSinceAdultArrival FALSE 
+    
+    set lenghtJuvenileMaturation FALSE 
+    set nbTicksSinceJuvenileBirth FALSE 
+    
+    ;;; outputs    
+
+    set visitCounter 0
+    set totalInfectionCycles 0
+    set totalCurationCycles 0
+  ]
+  
+  colorCropPatchesMethod
+  
+end
+
+to initializeAdultPredatorsMethod
+  
+  if proportionSNHPatches > 0
+  [
+    let counterPredatorsBorn 0
+    let X int (initNbPredators / count patches with [landUse = 0]) + 1
+
+    while [counterPredatorsBorn < initNbPredators]
+    [
+      let new-patch one-of patches with [ landUse = 0 and count adultPredators-here < X ]
+      if new-patch != nobody [ask new-patch [birthAdultPredatorsMethod set counterPredatorsBorn (counterPredatorsBorn + 1)]]
+    ]
+  ]
+  
+end
+
+to-report split [chaine] ; reporter that split strings into integer lists
+  ifelse cropsNumber != 1 
+  [
+   let liste n-values (cropsNumber ) [0]
+   let i 0
+   let counter 0
+   let tempo ""
+   While [i < length chaine]
+   [ 
+     ifelse item i chaine != "-"
+     [
+       set tempo (word tempo item i chaine)
+     ]
+     [
+       set liste replace-item counter liste read-from-string tempo
+       set tempo ""
+       set counter counter + 1
+     ]
+     set i i + 1
+   ]
+   report liste
+  ]
+  [
+    report (list (read-from-string but-last chaine))
+  ]
+end
+
+to splitSensibilityFrames
+  ifelse cropsNumber != 1 
+   [
+   let liste n-values length orderCrops [0]
+   let counter 0 ; represent the index of liste where values are going to be reported
+   let element (list) ; temporal list
+   let tempo 0 ; temporal values
+   let i 0 ; we will work on each value of the strings with i 
+   while [ i < length framesSensibility]
+   [
+     if item i framesSensibility != "-" and  item i framesSensibility != "_"
+     [
+       set tempo (word tempo item i framesSensibility)
+     ]
+     if item i framesSensibility = "_"
+     [
+       set element lput read-from-string tempo element
+       set tempo 0
+     ]
+     if item i framesSensibility = "-"
+     [
+       set element lput read-from-string tempo element
+       set tempo 0
+       set liste replace-item counter liste element
+       set element (list)
+       set counter counter + 1
+     ]
+     set i i + 1
+   ]
+      set sensibilityFrames liste
+  ]
+  [
+    set sensibilityFrames (list [1 150])
+  ]
+  
+end
+
+to transitionBetweenYearsMethod ; transition between 2 successive years
+
+  ;;; update attributes of patches
+  initializePatchesMethod
+
+  ;;; update attributes of adult-predators
+  ask adultPredators
+  [
+    ask patch-here [set predatorPresence TRUE]
+    
+    set distanceInPatches n-values (cropsNumber + 1) [0]
+    set distanceForOverwintering 0
+    set foragingValue (random foragingMovFrequency) + date + 1
+  ] ; check
+
+  ;;; updates counters
+  set counterInfectedCrops (list 0 0 0)
+  ;initializeOutputCountersMethod ; à décommeter pour réavoir les indicateurs
+end
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; generate predators
+to birthAdultPredatorsMethod
+  sprout-adultPredators 1
+  [
+    set birthDate date ; give an adult-predator his birth-date
+    ifelse year = 0 [set birthYear 0][set birthYear year] ; year attribute (for overwintering)
+    
+    set color red
+    
+    set dateFirstForagingMovement 1;random 15 ;1; 7 ; min (list (random-poisson 20) 50) ; min entre value random poisson et date-limite de sortie
+    set distanceInPatches n-values (cropsNumber + 1) [0]
+    set distanceForOverwintering 0
+    set foragingValue (random foragingMovFrequency) + date + 1
+  ]
+  set predatorPresence true ; assign to patch-here that there is an adult-predator on him
+end
+
+to birthJuvenilePredatorsMethod
+  sprout-juvenilePredators 1 [set color grey]
+end
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; files methods
+to initializeFileNamesMethod
+
+  ;;; var. file-name (root)
+  set fileName (word 
+    (random 1000) 
+    "-" 
+    proportionSNHPatches 
+    "-" 
+    (remove "."(word targetForAgregation))
+    "-" 
+    splitForFiles proportionCropsPatches "C" ; le - est déjà présent à la fin 
+    splitForFiles infectionRates "I"; le - est déjà présent à la fin 
+    
+    cropDistribution
+    "-" 
+    splitForFiles cropsOrder "R"; le - est déjà présent à la fin 
+    (remove "." (word overwinteringEffect))
+    "-" 
+    initNbPredators 
+    "-" 
+    (remove "."(word mortality)) 
+    "-" 
+    dateStartForagingForSNH
+    "-"
+    foragingMovFrequency
+     "-"
+    abilityToDetectAttractiveCrops
+    "-" 
+    foragingPattern
+    "-"
+    "J"
+    (layEgg + juvenileMaturation)
+    "-"
+    (random 1000)".txt")
+  
+                               
+  ;;; file names
+  set tickFileName (word "tick" "-" fileName)
+  set endSeasonFileName (word "end_season" "-" fileName)
+  set spatialFileName (word "spatial" "-" fileName)
+  set movementsFileName (word "adult_predators_movements" "-" fileName)
+
+end
+
+
+to writeTickFileMethod ; ok for the global landscape but not the different crops
+  
+  file-open tickFileName 
+ 
+  ; time
+  file-type year
+  file-type " "
+  file-type date
+  file-type " "
+  ; expl. var.
+  file-type count patches with [visitCounter > 0] ; nombre de patchs qui ont reçu au moins 1 visite, quelque soit le land-cover
+  file-type " "
+  ;file-type count patches with [landUse = 1 and state = 0 and totalCurationCycles = 0] ; nb. of patches never infected
+  ;file-type " "
+  file-type count patches with [landUse = 1 and state != 0] ; dynamic of pests: nb of patches with infected status per tick
+  file-type " "
+  file-type count patches with [landUse = 1 and (state = 1 or state = 2)] ; dynamic of pests: nb of patches infected and non-occupied, per tick
+  file-type " "
+  file-type count patches with [landUse = 1 and state = 3] ; dynamic of pests: nb of patches infected and occupied per an adult, per tick
+  file-type " "
+  file-type count patches with [landUse = 1 and state = 4] ; dynamic of pests: nb of patches infected and occupied per a juvenile, per tick
+  file-type " "
+  file-type count patches with [landUse = 1 and (state = 3 or state = 4)] ; dynamic of pests: nb of patches infected and occupied, per tick
+  file-type " "
+  file-type count patches with [landUse = 1 and state = 0 and totalCurationCycles > 0] ; nb. of patches infected and then cured
+  file-type " "
+  file-type count adultPredators ; dynamic of adult-predators
+  file-type " "
+  file-type count juvenilePredators ; dynamic of juvenile-predators
+  file-type "\n" ; carriage-return
+  
+  file-close
+  
+end
+
+to writeEndSeasonFileMethod ; totals on landscape at the end of a year
+  
+  file-open endSeasonFileName
+ 
+  ; time
+  file-type year
+  file-type " "
+  ; outputs at the end of the season for the whole landscape (sums)
+  ;;; landscape
+  file-type totalSNHPatches ; total number of SNH  
+  file-type " "
+  ;;; infection dynamics
+  foreach (range 1 (cropsNumber + 1))
+  [[x] -> 
+    file-type sum [totalInfectionCycles] of patches with [landCover = x]   ; nb of crop patches which have been infected (only 1 infection)
+    file-type " "
+    file-type count patches with [landCover = x and state = 0 and totalCurationCycles > 0] ; nb of crop patches which have been cured
+    file-type " " 
+   ]
+  ;;; adult-predators-dynamics
+  file-type count adultPredators ; total-number-of-adult-predators-at-the-end-of-season
+  file-type " "
+  file-type totalMovements 
+  file-type " "
+  file-type totalMovementsInCrops
+  file-type " "
+  file-type totalMovementsInSNH
+  file-type " "
+  file-type totalDeaths
+  file-type " "
+  file-type "\n" 
+ 
+  file-close
+  
+end
+
+to writeMovementsMethod ; spatial distribution
+  
+  file-open movementsFileName
+  
+  file-print (word 
+    who
+    " " 
+    birthYear
+    " "
+    birthDate
+    " "
+    year
+    " "
+    date
+    " "
+    landCover
+    )
+    
+   file-close
+    
+end
+
+ to-report splitdistanceInPatches
+  let liste ""
+  foreach distanceInPatches
+  [[x]->
+    set liste (word liste x " ")
+  ]
+    report liste
+end
+
+to writeSpatialFileMethod
+  
+  file-open spatialFileName
+  
+  ask patches with [landUse = 1]
+  [file-print (word 
+    year 
+    " " 
+    date 
+    " " 
+    pxcor 
+    " " 
+    pycor 
+    " " 
+    landCover
+    " " 
+    sensibilityD1
+    " "
+    sensibilityD2
+    " "
+    infectionRate
+    " "
+    closestSNHDistance
+    " " 
+    visitCounter 
+    " " 
+    totalInfectionCycles 
+    " "
+    totalCurationCycles  
+    " " 
+    infectionDate
+    " "
+    timeForCropLoss  
+    " "
+    birthYearOfMyPredator
+  )]
+  
+  file-close
+  
+end
+
+to-report splitForFiles [chaine char]
+  let i  0
+  let tempo char
+  while [i < length(chaine)] 
+  [
+    ifelse (item i chaine) = "-"
+    [
+      set tempo (word tempo "-" char)
+    ]
+    [
+      set tempo (word tempo item i chaine)
+    ]
+    set i i + 1
+  ]
+  report but-last tempo
+end
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; indicators methods
+
+to initializeOutputCountersMethod
+  
+  ;;; for pest dynamics
+  set counterInfectedCrops n-values cropsNumber [0]
+  
+  ;;; for adult-predators dynamics
+  set totalDeaths 0
+  set totalMovements 0
+  set totalMovementsInCrops 0
+  set totalMovementsInSNH 0
+  
+end
+
+to computeRegulationMethod ; regulation globale
+  set regulation n-values cropsNumber [0]
+  
+  foreach (range 1 (cropsNumber + 1))
+  [[x] ->
+    set regulation replace-item (x - 1) regulation (precision (count patches with [landCover = x and totalInfectionCycles > 0 and totalCurationCycles > 0] * 100 / count patches with [totalInfectionCycles > 0]) 2)
+  ]
+end
+
+to show_croploss
+  let tempo 0 
+  ask patches with [landUse > 0][
+    let pestCropLoss 90 * exp (-1 / 90 * (infectionDate - sensibilityD1))
+    let regulationPatch 0
+    set yield 0
+    ifelse timeForCropLoss != "NA"
+    [
+      ifelse timeForCropLoss < 51
+      [
+        set regulationPatch 90 * exp (-1 / 30 * timeForCropLoss)
+      ][
+        set regulationPatch 12.48 * exp ((50 - timeForCropLoss) / 40) + 4.5
+      ]
+      set yield precision (100 * (1 - pestCropLoss / 100 * (1 - regulationPatch / 100))) 0
+    ]
+    [set yield precision ( 100 * (1 - pestCropLoss / 100 )) 0]
+    
+    
+    if landCover = 1 [
+      set pcolor scale-color red yield 0 100
+      set tempo tempo + yield
+    ]
+  ]
+  print(tempo)
+  print( precision (tempo / item 0 totalCiPatches) 0)
+end
+
+;to computeCropLossMethod
+;  
+;  set sumLandscapeCropLoss 0
+;  set averageCropLossForOneCrop 0
+;  
+;  ask patches with [landUse = 1 and totalInfectionCycles > 0 and totalCurationCycles = 0]
+;  [
+;    ;;; thCropLoss
+;    ; modèle exp.dec
+;    let cropLossThisPatch 90 * exp(-(1 / 90) * (infectionDate - 1))
+;    
+;    ; modèle log5p
+;    ; let cropLossThisPatch 5 + (99 - 5) / (1 + exp(-(-0.08)*(infectionDate - 70)))^ 1
+;    
+;    ;;; indicators
+;    set sumLandscapeCropLoss sumLandscapeCropLoss + cropLossThisPatch
+;  ]
+;  
+;  ask patches with [landUse = 1 and totalInfectionCycles > 0 and totalCurationCycles > 0]
+;  [
+;    ;;; thCropLoss
+;    ; modèle exp.dec
+;    let thCropLossThisPatch 90 * exp(-(1 / 90) * (infectionDate - 1))
+;    
+;    ; modèle log5p
+;    ; let thCropLossThisPatch 5 + (99 - 5) / (1 + exp(-(-0.08)*(infectionDate - 30)))^ 1
+;    
+;    ;;; gainOfCropLoss
+;    
+;    ; modèle exp dec
+;    let regRate 90 * (exp((- 1 / 30) * (timeForCropLoss - 1)))
+;    
+;    ; modèle log5p
+;    ;let regRate 5 + (99 - 5) / (1 + exp(-(-0.08)*(timeForCropLoss - 30)))^ 1
+;    
+;    ;;; indicators
+;    
+;    let cropLossThisPatch thCropLossThisPatch - (regRate / 100 * thCropLossThisPatch)
+;    
+;    set sumLandscapeCropLoss sumLandscapeCropLoss + cropLossThisPatch
+;  ]
+;  
+;  set averageCropLossForOneCrop (sumLandscapeCropLoss / totalCropPatches)
+;  
+;end
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; movies
+
+;to saveVideo
+;  
+;  vid:start-recorder
+;  vid:record-view
+;  repeat 220 [
+;    go
+;    vid:record-view
+;  ]
+;  vid:save-recording "my-movie.mp4" 
+;
+;end
+
+
+

@@ -1,0 +1,391 @@
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; mortality
+
+; mortality:
+; adult-predators die randomly when they are in crops, both foraging or on an infected patch
+; no mortality in SNH patches
+; no mortality for juveniles
+; mortality occurs between start-season and end-season (0 - 180)
+
+to mortalityMethod
+  
+  if mortalityPattern = "constant"
+  [
+    ask adultPredators with [ [landUse] of patch-here = 1 and [state] of patch-here < 2 ]
+    [
+      let death? precision (random-float 1) 2
+      if (death? < mortality)
+      [
+        if (count adultPredators-here = 1 and count juvenilePredators-here = 0) [ask patch-here [set predatorPresence FALSE]]
+        set totalDeaths (totalDeaths + 1)
+        ;if year = totalYearsSimulation [writeMovementsMethod]
+        die 
+      ]
+    ]
+  ]
+  
+  if mortalityPattern = "densityDependence"
+  [
+    let totalAdultPredators (count adultPredators) ; adult-predators in both SNH / crops or only in crops?
+    if totalAdultPredators > 0
+    [
+      set mortality (1 - (1 / (totalAdultPredators ^ densityDependenceMortalityParameter)))
+      
+      ; exponential
+      ; let gamma-mortality-parameter 0.1
+      ; set adult-predators-mortality exp(- gamma-mortality-parameter * number-of-adult-predators)
+      
+      ; sigmoïd
+      ;let sigmoid-mortality-parameter-1 0.1
+      ;let sigmoid-mortality-parameter-2 0.1
+      ;set adult-predators-mortality (1 / (1 + sigmoid-mortality-parameter-1 * exp(- sigmoid-mortality-parameter-2 * number-of-adult-predators)))
+      
+    
+      ask adultPredators with [ [landUse] of patch-here = 1 ]
+      [
+        let death? precision (random-float 1) 2
+        if (death? < mortality)
+        [
+          if (count adultPredators-here = 1 and count juvenilePredators-here = 0) [ask patch-here [set predatorPresence FALSE]]
+          set totalDeaths (totalDeaths + 1)
+          die 
+        ]
+      ]
+    ]
+  ]
+ 
+end
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; foragingForFood
+
+; forage:
+; if the adult-predators can still fly (flight-capacity > 0) and currently stays on a patch like:
+; patch SNH
+; patch crop with state = 0,1,4
+; patch crop with state = 2 but not the first arrived
+; patch crop with state = 3 but not the first arrived
+; move
+; otherwise stay here (nothing happens) or die (if flight-capacity = 0)
+
+to foragingForFoodMethod
+  
+  ask adultPredators 
+  [
+    if date >= dateFirstForagingMovement
+    [
+      ; already on an attractive crop patch?
+      if predatorCannotStayHere
+      [ 
+        if date = foragingValue
+        [; move
+          foragingForFoodPatternMethod
+          ; test
+          set distanceInPatches replace-item landCover distanceInPatches ((item landCover distanceInPatches) + 1)
+          
+          if state = 2 [
+            set firstPredatorArrived [who] of one-of adultPredators-here
+            set birthYearOfMyPredator max [birthYear] of adultPredators with [who = [firstPredatorArrived] of myself]
+            set nextState 3
+            set predatorPresence TRUE
+          ]
+           
+          set foragingValue foragingValue + foragingMovFrequency
+        ]
+      ]
+      if durationBeforeEggs != false and nbTicksSinceAdultArrival = (durationBeforeEggs - 1) and state = 3 and nextstate = 4[
+        set foragingValue date + foragingMovFrequency
+      ]
+    ]
+  ]
+end
+
+;;; conditions (adult-predators unable to stay here)
+
+to-report predatorCannotStayHere 
+  ;show SNHpatch OR crop-patch-state-0-1-4 OR crop-patch-state2-but-not-first OR crop-patch-state3-but-not-first OR crop-patch-state3-and-first-but-time-for-eggs
+  report SNHpatch OR crop-patch-state-0-1-4 OR crop-patch-state2-but-not-first OR crop-patch-state3-but-not-first OR crop-patch-state3-and-first-but-time-for-eggs
+end
+
+; SNH patch
+to-report SNHpatch
+  report [landUse] of patch-here = 0
+end
+
+; crop patches with state = 0, 1 or 4
+to-report crop-patch-state-0-1-4
+  report [landUse] of patch-here = 1 and ([state] of patch-here = 0 or [state] of patch-here = 1 or [state] of patch-here = 4)
+end
+
+; crop patch state 2 but not first
+to-report crop-patch-state2-but-not-first
+  report [state] of patch-here = 2 and [landUse] of patch-here = 1 and [firstPredatorArrived] of patch-here != [who] of self
+end
+
+; crop patch state 3 but not first
+to-report crop-patch-state3-but-not-first
+  report [state] of patch-here = 3 and [landUse] of patch-here = 1 and [firstPredatorArrived] of patch-here != [who] of self
+end
+
+; crop patch state 3 but time for eggs
+to-report crop-patch-state3-and-first-but-time-for-eggs
+  report ([state] of patch-here = 3) and ([landUse] of patch-here = 1) and ([firstPredatorArrived] of patch-here = [who] of self) and ([nbTicksSinceAdultArrival] of patch-here = [durationBeforeEggs] of patch-here)
+end
+
+to foragingForFoodPatternMethod
+  
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+  if foragingPattern = "Oneof"
+  [
+   
+    ifelse any? patches in-radius detectionRadius with [state = 2 and landUse = 1] 
+    ; any patch in detection-radius? -> Y : arrival - patch = closer in-radius 1.5
+    [
+      ; choose directional-patch
+      ;; ATTENTION !! Date of infection et time-since-infection
+      ; let moreInfectedCropPatchInRadius min-one-of patches in-radius detectionRadius with [landUse = 1 and state = 2] [infectionDate]
+      
+      ; choose arrival-patch
+      ; let arrival-patch one-of patches in-radius 5 with[land-cover = 1 and state = 2]
+      ; let arrival-patch min-one-of patches in-radius 1.5 [distance more-infected-crop-patch-in-radius] 
+      let arrivalPatch min-one-of patches in-radius detectionRadius with [landUse = 1 and state = 2] [infectionDate]
+       
+      ; update departure-patch
+      if (count adultPredators-here = 1 and count juvenilePredators-here = 0) [ask patch-here [set predatorPresence FALSE]] ; if adult-predators was the only one on this patch
+      
+      ; adult-predator agent moves to arrival-patch
+      face arrivalPatch
+      move-to arrivalPatch
+      
+      ; update global var. for total nb of movements of adult-predators in each type of matrix
+      ifelse [landUse] of arrivalPatch = 0 
+      [set totalMovementsInSNH totalMovementsInSNH + 1] 
+      [set totalMovementsInCrops totalMovementsInCrops + 1]
+      
+      ; update adult-predator variables for distances in each type of matrix
+      set distanceInPatches replace-item landCover distanceInPatches ((item landCover distanceInPatches) + 1)
+      
+      ; update arrival-patch
+      ask patch-here [set predatorPresence TRUE set visitCounter visitCounter + 1]
+      
+    ]
+    ; N -> si nb.crops ds voisinage > 1 alors il va dans un crop, sinon random foraging movement in-radius 1.5
+    [
+        let arrivalPatch one-of patches in-radius detectionRadius ; with [(pxcor != [pxcor] of myself or pycor != [pycor] of myself)]
+        
+      ; update departure-patch
+        if (count adultPredators-here = 1 and count juvenilePredators-here = 0) [ask patch-here [set predatorPresence FALSE]] ; if adult-predators was the only one on this patch
+        
+        ; adult-predator agent moves to arrival-patch
+        face arrivalPatch
+        move-to arrivalPatch
+        
+        ; update global var. for total nb of movements of adult-predators in each type of matrix
+        ifelse [landUse] of arrivalPatch = 0 
+        [set totalMovementsInSNH totalMovementsInSNH + 1] 
+        [set totalMovementsInCrops totalMovementsInCrops + 1]
+        
+        ; update adult-predator variables for distances in each type of matrix
+        set distanceInPatches replace-item landCover distanceInPatches ((item landCover distanceInPatches) + 1)
+        
+        ; update arrival-patch
+        ask patch-here [set predatorPresence TRUE]
+    ]
+  ]
+  
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+  
+  if foragingPattern = "RandomB"
+  [
+  
+    ; choose arrival-patch
+    ; préférence pour patch crops plutôt que snh
+    ; ifelse any? patches in-radius 1.5 with [land-cover = 1]
+      let arrivalPatch one-of patches in-radius detectionRadius 
+      ;with [land-cover = 1 and (pxcor != [pxcor] of myself or pycor != [pycor] of myself)]
+      ; update departure-patch
+      if (count adultPredators-here = 1 and count juvenilePredators-here = 0) [ask patch-here [set predatorPresence FALSE]] ; if adult-predators was the only one on this patch
+    
+      ; adult-predator agent moves to arrival-patch
+      face arrivalPatch
+      move-to arrivalPatch
+    
+      ; update global var. for total nb of movements of adult-predators in each type of matrix
+      ifelse [landUse] of arrivalPatch = 0 
+      [set totalMovementsInSNH totalMovementsInSNH + 1] 
+      [set totalMovementsInCrops totalMovementsInCrops + 1]
+    
+      ; update adult-predator variables for distances in each type of matrix
+      set distanceInPatches replace-item landCover distanceInPatches ((item landCover distanceInPatches) + 1)
+    
+      ; update arrival-patch
+      ask patch-here [set predatorPresence TRUE]
+    ]
+  
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+  
+  ; ability to detect attacked crop patches -> detectionRadius
+  ; ability to classify between attacked crop patches -> preferenceForOneState and moreInfected
+  ; ability to know if there are already predators on crop patch with pests -> à relier au précédent ?
+  ; ability to move -> abilityToJump
+  
+  if foragingPattern = "Onejump"
+  [ 
+    ifelse any? patches in-radius detectionRadius with [state = 2 and landUse = 1] 
+    ; any patch in detection-radius? -> Y : arrival - patch = closer in-radius 1.5
+    [
+      ; choose directional-patch
+      let moreInfectedCropPatchInRadius min-one-of patches in-radius detectionRadius with [landUse = 1 and state = 2] [infectionDate]
+      
+      ; choose arrival-patch
+      let arrivalPatch min-one-of patches in-radius 1.5 [distance moreInfectedCropPatchInRadius] ; in-radius 5
+             
+      ; update departure-patch
+      if (count adultPredators-here = 1 and count juvenilePredators-here = 0) [ask patch-here [set predatorPresence FALSE]] ; if adult-predators was the only one on this patch
+      
+      ; adult-predator agent moves to arrival-patch
+      face arrivalPatch
+      move-to arrivalPatch
+      
+      ; update global var. for total nb of movements of adult-predators in each type of matrix
+      ifelse [landUse] of arrivalPatch = 0 
+      [set totalMovementsInSNH totalMovementsInSNH + 1] 
+      [set totalMovementsInCrops totalMovementsInCrops + 1]
+      
+      ; update adult-predator variables for distances in each type of matrix
+      set distanceInPatches replace-item landCover distanceInPatches ((item landCover distanceInPatches) + 1)
+      
+      ; update arrival-patch
+      ask patch-here [set predatorPresence TRUE set visitCounter visitCounter + 1]
+      
+    ]
+    ; N -> si nb.crops ds voisinage > 1 alors il va dans un crop, sinon random foraging movement in-radius 1.5
+    [
+      let arrivalPatch one-of patches in-radius 1.5  with [(pxcor != [pxcor] of myself or pycor != [pycor] of myself)]
+        
+      ; update departure-patch
+      if (count adultPredators-here = 1 and count juvenilePredators-here = 0) [ask patch-here [set predatorPresence FALSE]] ; if adult-predators was the only one on this patch
+      
+      ; adult-predator agent moves to arrival-patch
+      face arrivalPatch
+      move-to arrivalPatch
+      
+      ; update global var. for total nb of movements of adult-predators in each type of matrix
+      ifelse [landUse] of arrivalPatch = 0 
+      [set totalMovementsInSNH totalMovementsInSNH + 1] 
+      [set totalMovementsInCrops totalMovementsInCrops + 1]
+      
+      ; update adult-predator variables for distances in each type of matrix
+      set distanceInPatches replace-item landCover distanceInPatches ((item landCover distanceInPatches) + 1)
+      
+      ; update arrival-patch
+      ask patch-here [set predatorPresence TRUE]
+    ]
+  ]
+  
+end
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; foragingForSNH flee = come-back to SNH between date-to-flee and end-season
+
+
+to foragingForSNHMethod
+  ask adultPredators 
+  [
+    if [landUse] of patch-here != 0 
+    [
+      ; choose directional-patch
+      let closestSNHPatch patch [xClosestSNH] of patch-here [yClosestSNH] of patch-here
+      
+      ; choose arrival-patch
+      let arrivalPatch min-one-of patches in-radius 1.5 [distance closestSNHPatch]
+      
+       if [state]  of patch-here != 3 or ([firstPredatorArrived] of patch-here != who) and date = foragingValue  [
+        ; update departure-patch
+        if (count adultPredators-here = 1 and count juvenilePredators-here = 0) [ask patch-here [set predatorPresence FALSE]] ; if adult-predators was the only one on this patch
+         
+        ; adult-predator agent moves to arrival-patch
+        face arrivalPatch
+        move-to arrivalPatch
+        set foragingValue foragingValue + foragingMovFrequency
+        
+        ; update global var. for total nb of movements of adult-predators in each type of matrix
+        ifelse [landUse] of arrivalPatch = 0 
+        [set totalMovementsInSNH totalMovementsInSNH + 1] 
+        [set totalMovementsInCrops totalMovementsInCrops + 1]
+      
+        ; update adult-predator variables for distances in each type of matrix
+        set distanceInPatches replace-item landCover distanceInPatches ((item landCover distanceInPatches) + 1)
+        ;set distanceForOverwintering distanceForOverwintering + 1
+        
+        ; update arrival-patch
+        ask patch-here [set predatorPresence TRUE set visitCounter visitCounter + 1]
+       ]
+     
+    ]
+    
+    ; test
+    set distanceForOverwintering distanceForOverwintering + 1
+  ]
+end
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; overwintering at end-season -> new year
+
+;;; overwintering
+; all juveniles die because they are in crop patches
+; carrying-capacity of SNH cluster: 1/1, included into the flee method
+; adults in SNH clusters survive to the overwintering with a proba
+
+to overwinteringMethod
+  
+  ; on interroge les patchs avec + d'1 pred dessus
+  ask patches with [(landUse = 0) and (count adultPredators-here > 1)]
+  [
+    ; on conserve le nb - 1 de préds abrités
+    let var1 count adultPredators-here - 1
+    ; kill tous les préds. sur ce patch sauf 1
+    ask n-of var1 adultPredators-here [die]
+    
+    ; on demande aux patchs avec le same numCluster et sans préds d'en prendre 1
+    let nbFreeSNHPatches count patches with [(numCluster = [numCluster] of myself) and (count adultPredators-here = 0)]
+    ifelse var1 > nbFreeSNHPatches 
+    [ask patches with [(numCluster = [numCluster] of myself) and (count adultPredators-here = 0)][birthAdultPredatorsMethod set predatorPresence true]]
+    [ask n-of var1 patches with [(numCluster = [numCluster] of myself) and (count adultPredators-here = 0)][birthAdultPredatorsMethod set predatorPresence true]]
+    
+  ]
+
+  ask patches with [(landUse = 0) and (count adultPredators-here > 0)]
+  [
+    ; si on veut augmenter l'effet overwintering = par ex. il faudrait 2 patchs SNH pour faire survivre un prédateur
+    if (overwinteringEffect > 1)
+    [
+      let totalSNHPatchesInMyCluster (count patches with [numCluster = [numCluster] of myself])
+      let totalSNHPatchesInMyClusterWithPredators ( count patches with [ (numCluster = [numCluster] of myself) and (count adultPredators-here > 0) ] )
+      
+      ; bizarre, pour fixer un bug
+      if totalSNHPatchesInMyClusterWithPredators != 0
+      [
+        if ( ( totalSNHPatchesInMyCluster / totalSNHPatchesInMyClusterWithPredators ) < overwinteringEffect )
+        [
+          let totalPredatorsWhichCanOverwinter floor (totalSNHPatchesInMyCluster / overwinteringEffect)
+          let totalPredatorsToKill (totalSNHPatchesInMyClusterWithPredators - totalPredatorsWhichCanOverwinter)
+        
+          ask n-of totalPredatorsToKill patches with [ (numCluster = [numCluster] of myself) and (count adultPredators-here > 0) ]
+          [
+            set totalDeaths (totalDeaths + 1)
+            set predatorPresence FALSE
+            ask adultPredators-here [die]
+          ] 
+        ]
+      ]
+    ]
+  ]
+  
+end
+
+
+
+
+
+

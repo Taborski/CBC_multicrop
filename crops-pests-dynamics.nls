@@ -1,0 +1,237 @@
+globals
+[
+  counterInfectedCrops ; total number for the different crops which have been infected since the beginning of the year
+]
+
+
+to updateCropsDuringForagingForFoodMethod
+  ;;; check if it is still the crop sensibility period
+  (foreach (but-first range (cropsNumber + 1) ) sensibilityFrames
+  [[x frame]->
+    if item 1 frame = date 
+    [ask patches with [landCover = x and (state = 1 or state = 2)][set nextState 0]] ; end of the colonisation period
+  ])
+  
+  ;;; update latent
+  ask patches with [landUse = 1 and state = 1 and nextstate = 1]
+  [   
+    if (date - infectionDate + 2 ) = lengthLatentPeriod [set nextState 2]
+  ]
+
+  ;;; update attractive without presence of adult-predators
+  ;ask patches with [landUse = 1 and state = 2 and predatorPresence = FALSE]
+  ;[
+    ; set time-for-crop-loss time-for-crop-loss + 1
+  ;]
+
+  ;;; update attractive with presence of adult-predators: this state occurs during only 1 tick (as soon as one or more adults arrive, next-state -> 3)
+  ask patches with [landUse = 1 and state = 2 and predatorPresence = TRUE]
+  [
+    ; if more than one adult-predators arrive on the same patch in the same time, choose one-of as the first one arrived
+    set firstPredatorArrived [who] of one-of adultPredators-here
+    ;set birthYearOfMyPredator max [birthYear] of adultPredators with [xcor = [pxcor] of myself and ycor = [pycor] of myself]
+    set birthYearOfMyPredator max [birthYear] of adultPredators with [who = [firstPredatorArrived] of myself]
+    
+    ; update next-state
+    set nextState 3
+  ]
+
+  ;;; update occupied by adults
+  ask patches with [landUse = 1 and state = 3 and predatorPresence = TRUE]
+  [   
+    set nbTicksSinceAdultArrival nbTicksSinceAdultArrival + 1
+    
+    ; update next-state
+    if nbTicksSinceAdultArrival = durationBeforeEggs - 1
+    [ 
+      ifelse random-float 1 <= probaBirthJuvenilePredators 
+      [set nextState 4] 
+      [
+        set nextState 2
+        set datePredatorArrival FALSE
+        set firstPredatorArrived FALSE
+        set timeForCropLoss "NA"
+        ask adultPredators-here[mortalityMethod foragingForFoodMethod]
+      ]
+    ]
+  ]
+
+  ; update occupied by juveniles
+  ask patches with [landUse = 1 and state = 4]
+  [
+    set nbTicksSinceJuvenileBirth nbTicksSinceJuvenileBirth + 1
+    
+    ; update next-state
+    if nbTicksSinceJuvenileBirth = lenghtJuvenileMaturation [set nextState 0]
+  ]
+
+end
+
+to updateCropsDuringForagingForSNHMethod
+  
+  ;;; update latent
+  ask patches with [landUse = 1 and (state = 1 or state = 2)]
+  [   
+    set nextState 0
+  ]
+  ask patches with [landUse = 1 and state = 3 and predatorPresence = TRUE]
+  [   
+    set nbTicksSinceAdultArrival nbTicksSinceAdultArrival + 1
+    
+    ; update next-state
+    if nbTicksSinceAdultArrival = durationBeforeEggs - 1
+    [ 
+      ifelse random-float 1 <= probaBirthJuvenilePredators 
+      [set nextState 4] 
+      [
+        set nextState 2
+        set datePredatorArrival FALSE
+        set firstPredatorArrived FALSE
+        set timeForCropLoss "NA"
+        ask adultPredators-here[mortalityMethod foragingForFoodMethod]
+      ]
+    ]
+  ]
+  
+  ;;; update occupied by juveniles -> sane
+  ask patches with [landUse = 1 and state = 4]
+  [
+    set nbTicksSinceJuvenileBirth nbTicksSinceJuvenileBirth + 1
+    if nbTicksSinceJuvenileBirth = lenghtJuvenileMaturation [set nextState 0]
+  ]
+end
+
+to switchCropStatusMethod
+  
+  ;;; sane -> latent
+  ask patches with [landUse = 1 and state = 0 and nextState = 1]
+  [
+    ; update state and assign attributes
+    set state 1
+    set infectionDate date
+    
+    ; update-crop-loss-without-control-for-this-cycle-of-infection
+    set totalInfectionCycles totalInfectionCycles + 1
+    
+   ; set time-since-infection 0
+    set lengthLatentPeriod 7 ;+ random 2 ; 6,7,8
+
+  ]
+
+  ;;; latent -> attractive
+  ask patches with [landUse = 1 and (state = 1 OR state = 3) and nextState = 2] 
+  [ set state 2 ]
+
+  ;;; attractive -> occupied by adults
+  ask patches with [landUse = 1 and state = 2 and nextState = 3]
+  [
+    ; update state and assign attributes
+    set state 3
+    set datePredatorArrival date
+    ;set birthYearOfMyPredator [birthYear] of adultPredators with [who = firstPredatorArrived]
+    ;set birthYearOfMyPredator max [birthYear] of adultPredators with [xcor = [pxcor] of myself and ycor = [pycor] of myself]
+    set timeForCropLoss (date - infectionDate - lengthLatentPeriod)
+    set nbTicksSinceAdultArrival 0
+   ; set foraging-movement-distance-for-predator-before-arrival ([distance-in-snh] of adult-predator first-adult-predator-arrived + [distance-in-crops] of adult-predator first-adult-predator-arrived)
+    set durationBeforeEggs layEgg; base 7
+  ]
+
+  ;;; occupied by adults -> occupied by juveniles
+  ask patches with [landUse = 1 and state = 3 and nextState = 4]
+  [
+    ; update state and assign attributes
+    set totalCurationCycles totalCurationCycles + 1
+    set state 4
+    birthJuvenilePredatorsMethod
+    set nbTicksSinceJuvenileBirth 0
+    set lenghtJuvenileMaturation juvenileMaturation; base 21
+  ]
+
+  ;;; occupied by juveniles -> sane
+  ask patches with [landUse = 1 and state = 4 and nextState = 0]
+  [  
+    ; update state and attributes for a new cycle
+    set state 0
+    set nextState 0
+    
+    set predatorPresence FALSE
+
+    ; convert the juvenile turtle into an adult turtle
+    ask juvenilePredators-here [die]
+    birthAdultPredatorsMethod
+  ]
+  ;;;; infested but no more the season -> sane
+  ask patches with [landUse = 1 and (state = 1 or state = 2) and nextState = 0]
+  [
+    set state 0
+    set nextState 0
+  ]
+    
+end
+
+to pestAttackMethod
+  (foreach  infectionFrequency (range 1 (cropsNumber + 1)) nbOfCiToInfectPerTick sensibilityFrames theoreticalNbFinallyInfectedCrops
+    [ [freq crop cropPatchesToInfect frames totalToInfect] ->
+      
+      if freq != 0 ; on check si il y a une attaque
+      [
+       ; if (ticks mod infection-pattern-frequency) = 0 and (date < date-to-flee - 7) ; pattern-infection occurs every 3 ticks (not every tick)
+       if (ticks mod freq) = 0 and date >= item 0 frames and date <= (item 1 frames) - 1 ; les deux dates sont comprises dedans, on s'arrete un pas de temps avant pour infecter le nombre de cases nécessaires. 
+       [
+        ; each tick, a certain number of sane patches are infected
+        ; avec la condition nb-cycles-infection-curation = 0, on n'autorise qu'une seule infection par an
+        let stockSanesPatches count patches with [landCover = crop and state = 0 and totalInfectionCycles = 0]
+        ifelse stockSanesPatches > cropPatchesToInfect
+         [
+           ; avec la condition nb-cycles-infection-curation = 0, on n'autorise qu'une seule infection par an
+           ask n-of cropPatchesToInfect patches with [landCover = crop and state = 0 and totalInfectionCycles = 0][set nextState 1]
+           ; test
+           set counterInfectedCrops replace-item (crop - 1) counterInfectedCrops (cropPatchesToInfect + item (crop - 1) counterInfectedCrops)
+         ]
+         [
+            ;show counterInfectedCrops
+           
+           ; si le nb de crops pas encore infectés une seule fois est < au nb de patchs à infecter, on les infecte tous (la condition nb-cycles = 0 est importante alors pour ne pas compter les patchs soignés précédemment)
+           ; avec la condition nb-cycles-infection-curation = 0, on n'autorise qu'une seule infection par an
+           ask patches with [landCover = crop and state = 0 and totalCurationCycles = 0][set nextState 1]
+           set counterInfectedCrops replace-item (crop - 1) counterInfectedcrops (count patches with [landCover = crop and state = 0 and totalInfectionCycles = 0] + item (crop - 1 ) counterInfectedCrops)
+         ]
+          
+          if (item (crop - 1 ) counterInfectedCrops) < totalToInfect [
+            
+            let difference 0
+            ifelse totalToInfect = item (crop - 1) totalCiPatches [
+              set difference (precision (totalToInfect * (date - (item 0 frames) )* item (crop - 1) cropsInfectionRates / 100 ) 0) - (count patches with [totalinfectioncycles = 1 and landCover = crop])
+              ask n-of difference patches with [landCover = crop and state = 0 and totalInfectionCycles = 0][set nextstate 1]
+              ;show (word "C" crop "  ou je dois en être " (precision (totalToInfect * (date - (item 0 frames) )* item (crop - 1) cropsInfectionRates / 100 ) 0) " nb actuel " count patches with [totalinfectioncycles = 1 and landCover = crop])
+            ][
+              set difference (precision (totalToInfect * (date - (item 0 frames))/(item 1 frames - item 0 frames)) 0) - (count patches with [totalinfectioncycles = 1 and landCover = crop])
+              ;show (word "C" crop "  ou je dois en être " (precision (totalToInfect * (date - (item 0 frames))/(item 1 frames - item 0 frames)) 0) " nb actuel " count patches with [totalinfectioncycles = 1 and landCover = crop])
+              ask n-of difference patches with [landCover = crop and state = 0 and totalInfectionCycles = 0][set nextstate 1]
+            ]
+            ;show difference
+            set counterInfectedCrops replace-item (crop - 1) counterInfectedCrops (difference + item (crop - 1) counterInfectedCrops)
+          ]
+          ;show counterInfectedCrops
+      
+       ]
+       
+      ]
+  ])
+end
+
+
+
+
+to colorCropPatchesMethod
+  ask patches with [landUse = 1 and state != 0][set pcolor scale-color blue state 4 1]
+  ;ask patches with [landUse = 1 and state = 0][set pcolor 55 - 10 * landCover]
+  ;; demonstration
+  (foreach sensibilityFrames range cropsNumber
+    [[x crop] -> 
+    ifelse (date >= item 0 x) and (date <= item 1 x)
+      [
+        ask patches with [landCover = crop + 1 and state = 0 ][set pcolor  55 - 10 * landCover]]
+      [ask patches with [landCover = crop + 1 and state = 0 ][set pcolor  57 - 10 * landCover]]
+    ])
+end

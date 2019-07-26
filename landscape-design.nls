@@ -1,0 +1,327 @@
+globals 
+[
+  averageGreenGreenNeighbors
+  nbPermutationsToTargetAgregation
+  
+  ;nbPatchesInClusters ; var for alternative = nb de patchs voulu dans un cluster
+  totalClusters
+  
+  varLabelClusterGrowth
+  
+  ; test
+  varianceGreenGreenNeighbors
+]
+
+
+
+to landscapeDesignMethod
+  
+  ; presence of SNH patches ?
+  ifelse proportionSNHPatches > 0
+  [
+  
+    ; random landUse landscape, according to 'number-of-SNH-patches'
+    ask patches [set landUse 1 set fixed FALSE]
+    ask n-of totalSNHPatches patches [set landUse 0 set pcolor 55]
+  
+    ; landUse permutations to find a configuration close to 'target-of-agregation'
+  
+    set averageGreenGreenNeighbors mean [count neighbors4 with [landUse = 0 ]] of patches with [landUse = 0] ; while-loop fits 'average-green-green-neighbors' with 'target-of-agregation'
+    
+    ; test
+    ;set varianceGreenGreenNeighbors variance [count neighbors4 with [landUse = 0 ]] of patches with [landUse = 0]
+    
+    set nbPermutationsToTargetAgregation 0
+  
+    while [(abs(averageGreenGreenNeighbors - targetForAgregation) > accuracyThreshold) = TRUE AND (nbPermutationsToTargetAgregation < maxPermutations) = TRUE]
+    [
+      ;show averageGreenGreenNeighbors
+    
+      set nbPermutationsToTargetAgregation nbPermutationsToTargetAgregation + 1
+    
+      ;show nbPermutationsToTargetAgregation
+    
+      set averageGreenGreenNeighbors mean [count neighbors with [landUse = 0]] of patches with [landUse = 0]
+      
+      ; test
+      ;set varianceGreenGreenNeighbors variance [count neighbors4 with [landUse = 0 ]] of patches with [landUse = 0]
+    
+      ifelse averageGreenGreenNeighbors < targetForAgregation
+      [
+        ask one-of patches with [landUse = 0]
+        [ 
+          let N count neighbors with [landUse = 0]
+          let moreGreenNeighborsThanMe patches with [landUse = 0 and self != myself and (member? self [neighbors] of myself = false )] with [count neighbors with [landUse = 0] >= N and count neighbors with [landUse = 0] < count neighbors]
+          ;show more-green-neighbors-than-me
+          if count moreGreenNeighborsThanMe > 0 
+          [
+            ask one-of moreGreenNeighborsThanMe 
+            [
+              ask one-of neighbors with [landUse = 1] [set landUse 0]
+              ask myself [set landUse 1]
+            ]
+          ]
+        ]
+      ]
+      ; ifelse 2nd brackets
+      [ 
+        ask one-of patches with [landUse = 0]
+        [ 
+          let N count neighbors with [ landUse = 0 ]
+          let lessGreenNeighborsThanMe patches with [landUse = 1 and (member? self [neighbors] of myself = false )] with [count neighbors with [landUse = 0] < N and count neighbors with [landUse = 0] < count neighbors]
+          if count lessGreenNeighborsThanMe > 0 
+          [
+            ask one-of lessGreenNeighborsThanMe 
+            [
+              ask one-of neighbors with [landUse = 1] [set landUse 0]
+              ask myself [set landUse 1 ]
+            ]
+          ]
+        ]
+      ] ; end ifelse
+    
+    ] ; end while
+      
+    ; identify SNH clusters and label them
+    
+  
+    ; for every crop patch, compute the distance (minimal nb of jumps) to the closest SNH patch
+    computationProximityWithSNHMethod
+    ask patches with [landUse = 0] [set landCover 0 set fixed TRUE]
+  ]
+  ; if proportion-of-SNH-patches = 0 => control
+  [
+    ask patches [set landUse 1 set fixed FALSE]
+  ]
+  distributeCrops
+  colorPatchesMethod ; color patches
+  findClustersMethod
+end
+
+to computationProximityWithSNHMethod
+
+  ; SNH patches give themselves their own coordinates and distances
+  ask patches with [landUse = 0]
+  [
+    set closestSNHDistance 0
+    set xClosestSNH [pxcor] of self
+    set yClosestSNH [pycor] of self
+  ]
+
+  ; SNH patches give to their crop neighbors : 1) closest-SNH-distance = 1, and 2) their own coordinates (= coordinates of the closer SNH)
+  ask patches with [landUse = 0]
+  [
+    let xClosestSNHStart pxcor
+    let yClosestSNHStart pycor
+    ask neighbors4
+    [
+      if landUse = 1
+      [
+        set closestSNHDistance 1
+        set xClosestSNH xClosestSNHStart
+        set yClosestSNH yClosestSNHStart
+      ]
+    ]
+  ]
+
+  ; updated crop patches ask their not updated crop neighbors and give them : 
+  ; 1) closer-SNH-distance of self + 1, 
+  ; and 2) their own coordinates (= coordinates of the closer SNH)
+  while [any? patches with [closestSNHDistance = 0 and landUse = 1]]
+  [
+    ask patches with [closestSNHDistance != 0]
+    [
+      ask neighbors4
+      [
+        if landUse = 1 and  closestSNHDistance = 0
+        [
+          set closestSNHDistance [closestSNHDistance + 1] of myself
+          set xClosestSNH [xClosestSNH] of myself
+          set yClosestSNH [yClosestSNH] of myself
+        ]
+      ]
+    ]
+  ]
+end
+
+;;; crops distribution
+to distributeCrops ; distribute crops dpending on
+  ifelse cropsNumber = 1 ; une seule culture 
+  [
+    ask patches with [fixed = FALSE][set landUse  1 set landCover 1 set fixed TRUE]
+  ]
+  [ ; plusieures cultures
+   if cropDistribution = "randomly" 
+   [
+     let counter 1
+     foreach but-last totalCiPatches
+     [
+       element -> ask n-of element patches with [fixed = FALSE][set landCover counter set fixed TRUE]
+       set counter counter + 1
+     ]
+     let agentSetFixedFalse patches with [fixed = FALSE]
+     set totalCiPatches replace-item ( cropsNumber - 1) totalCiPatches (count agentSetFixedFalse) ; distribute the last crop in one time
+     ask agentSetFixedFalse [set landCover counter set fixed TRUE]
+   ]
+    
+   if cropDistribution = "randomly9"[
+
+    let compteur n-values cropsNumber [0]
+    let landCoverValue but-first range (cropsNumber + 1 )
+
+    While [compteur != totalCiPatches][
+      (foreach  totalCiPatches compteur landCoverValue ; distribute one landcover at every step to avoid some agregation issues.
+        [[obj compt land] -> 
+          if obj - compt >= 9 [
+            ask n-of 1 patches with [fixed != TRUE][
+	      set landCover land 
+              set landUse 1 set fixed TRUE   
+	      ask neighbors  [if fixed != TRUE [set landCover land set landUse 1 set fixed TRUE ]]]
+          ]
+          if obj - compt < 9 and obj - compt > 0 [
+            ask n-of 1 patches with[fixed != TRUE][set landCover land set landUse 1 set fixed TRUE ]
+          ]
+          set compteur replace-item  (land - 1) compteur (count patches with [landCover = land] )
+      ])
+    ]
+      
+    ]
+   
+    if cropDistribution = "randomly25"[
+      let compteur n-values cropsNumber [0]
+      let landCoverValue but-first range (cropsNumber + 1 )
+
+      While [compteur != totalCiPatches][
+        (foreach  totalCiPatches compteur landCoverValue
+          [[obj compt land] -> 
+            if obj - compt >= 25 [
+              ask n-of 1 patches with [fixed != TRUE][
+                set fixed TRUE 
+                set landCover land 
+                set landUse 1 
+                set pcolor 55 - 10 * land
+                ask neighbors [if fixed != TRUE[
+                  set landCover land 
+                  set landUse 1 
+                  set fixed TRUE 
+                  set pcolor 55 - 10 * land]
+                  ask neighbors with[fixed != TRUE][
+                    set landCover land 
+                    set landUse 1 
+                    set fixed TRUE
+                    set pcolor 55 - 10 * land]
+                ]
+              ]
+            ]
+            if obj - compt >= 9 and obj - compt < 25 [
+              ask n-of 1 patches with [fixed != TRUE][set landCover land set landUse 1 set fixed TRUE   set pcolor 55 - 10 * land ask neighbors  [if fixed != TRUE [set landCover land set landUse 1 set fixed TRUE set pcolor 55 - 10 * land ]]]
+            ]
+            if obj - compt < 9 and obj - compt > 0 [
+            ask n-of 1 patches with[fixed != TRUE][set landCover land set landUse 1 set fixed TRUE set pcolor 55 - 10 * land ]
+            ]
+            set compteur replace-item  (land - 1) compteur (count patches with [landCover = land] )
+        ])
+      ]
+  ]
+    
+   if cropDistribution = "aroundSNH"[
+    ask patches with [fixed = FALSE][set landCover last orderCrops] ; directly distribute the farest crop from SNH
+    foreach but-last orderCrops
+    [[x] ->
+     let reste item (x - 1) totalCiPatches
+     let culture 0 ;variable qui permet de répartir les patchs autour des ESN puis de la culture en première position puis de la seconde jusqu'à la culture i.
+     let counter 0
+     while [reste > 0 and counter < 10]
+     [
+       let voisins_pot potentialNeighbors culture ; agentset des voisins directs et non fixés. 
+       if count (voisins_pot) >= 0 ;je ne sais plus pk j'ai mis cette condition mais normalement c'est positif ou nul
+       [
+         ifelse count (voisins_pot) >= reste ; je peux placer tout mon reste dans l'agentset
+         [
+           ask n-of reste voisins_pot [set landCover x set fixed TRUE]
+           set reste 0
+         ]
+         [ ;je ne peux pas tout placer donc je sature les voisins potentiels et actualise le reste
+         ask voisins_pot[set landCover x set fixed TRUE]
+         set reste reste - count (voisins_pot)
+         ]
+       ]
+       if count voisins_pot = 0 ;si je n'ai plus de voisins potentiel pour la culture j, je passe à la culture j + 1. 
+       [
+         set culture item counter orderCrops
+         set counter counter + 1
+       ] 
+      ]; end while
+    ]; end foreach
+   ]
+  ]
+end
+
+to-report potentialNeighbors [crop] ; report the potential neighbors agentset
+  let listeOfNeighbors [neighbors4 with [fixed = FALSE]] of patches with [landCover = Crop]
+  let tempo item 0 listeOfNeighbors
+  foreach butfirst listeOfneighbors[
+    [x] ->
+    set tempo ( patch-set tempo x)
+  ]
+  report tempo
+end
+
+to colorPatchesMethod
+  ask patches [ifelse landUse = 0 [set pcolor 55][set pcolor (57 - 10 * landCover)]]
+end
+
+;;; identify clusters and label them ;;;; 
+
+to findClustersMethod
+  ask patches[set cluster nobody set numCluster ""] ; initially, patches have no clusters
+  
+  loop [
+    
+    ; pick a random patch that isn't in a cluster yet
+    let seed one-of patches with [cluster = nobody]
+    
+    ; if we can't find one, then we're done!
+    if seed = nobody
+    [ 
+      showClustersMethod
+      stop 
+    ]
+    
+    ; otherwise, make the patch the "leader" of a new cluster, by assigning itself to its own cluster
+    ; then call grow-cluster to find the rest of the cluster
+    ask seed
+    [ 
+      set cluster self
+      growClusterMethod 
+    ]
+    
+  ]
+  
+  display
+end
+
+to growClusterMethod 
+  ask neighbors4 with [(cluster = nobody) and (pcolor = [pcolor] of myself)]
+  [ 
+    set cluster [cluster] of myself
+    growClusterMethod 
+  ]
+end
+
+to showClustersMethod ; once all the clusters have been found put numeric labels on them, so the user can see that the clusters were identified correctly
+  let counter 0
+  loop
+  [ 
+    ;; pick a random patch we haven't labeled yet
+    let p one-of patches with [numCluster = ""]
+    if p = nobody [ stop ]
+    
+    ;; give the same label to all patches in the chosen patch's cluster 
+    ask p [ask patches with [cluster = [cluster] of myself] [set numCluster counter]]
+    set counter counter + 1 
+  ]
+end
+
+
+

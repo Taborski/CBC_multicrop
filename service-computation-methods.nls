@@ -1,0 +1,65 @@
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;; update "regulation" attributes of one patch
+
+
+;;; crop loss for this cycle if no control (th. crop-loss)
+
+;to update-crop-loss-without-control-for-this-cycle-of-infection
+;  ; set crop-loss-without-control-for-this-cycle-of-infection 0.6 * exp(- gamma-without-CBC * (infection-date / length-season)) + 0.05
+;  ; test
+;  set crop-loss-without-control-for-this-cycle-of-infection (0.6 * exp(- gamma-without-CBC * (infection-date / length-season)) + 0.05) * 100
+;end
+
+;;; crop loss for 1st infection if no control (th. crop-loss)
+
+;to update-crop-loss-1st-infection
+;  set crop-loss-1st-infection crop-loss-without-control-for-this-cycle-of-infection
+;end
+
+;;; crop loss for this cycle with control (real crop-loss)
+
+;to update-crop-loss-with-control-for-this-cycle-of-infection
+;  
+;  ; compute regulation-rate = f°(time-for-crop-loss = duration between pests and predators arrivals)
+;  let regulation-rate exp(- gamma-regulation-rate * (time-for-crop-loss / length-season))
+;  
+;  ; compute th. max (without regulation = f°(infection-date)) et min crop-loss (with max regulation efficiency)
+;  let max-th-crop-loss (0.6 * exp(- gamma-without-CBC * (infection-date / length-season)) + 0.05) * 100
+;  ; let min-th-crop-loss exp(- gamma-with-CBC * (infection-date / length-season))
+;  let min-th-crop-loss 0.05 * 100
+;  
+;  ; compute real crop-loss after regulation
+;  let difference (max-th-crop-loss - min-th-crop-loss)
+;  
+;  ; test valeur de crop loss
+;  ; set crop-loss-with-control-for-this-cycle-of-infection (max-th-crop-loss - (difference * regulation-rate))     
+;  ; set crop-loss-with-control-for-this-cycle-of-infection (difference * regulation-rate) * 100 
+;  set crop-loss-with-control-for-this-cycle-of-infection (difference * regulation-rate)
+;  
+;
+;end
+
+;;; total crop loss for all cycles
+
+;to update-for-this-crop-patch-total-crop-loss-for-a-season
+;  
+;  set total-crop-loss-for-a-season (total-crop-loss-for-a-season + crop-loss-with-control-for-this-cycle-of-infection)
+;
+;end
+
+;;; crop loss end season (non-cured patches and patches which are going to be cured)
+
+;to update-crop-loss-end-season
+;  
+;  ; for non-cured patches
+;  ask patches with [land-cover = 1 and (state = 1 OR state = 2 OR state = 3)]
+;  [set total-crop-loss-for-a-season (total-crop-loss-for-a-season + crop-loss-without-control-for-this-cycle-of-infection)]
+;
+;end
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;; update "regulation"  var. for the whole landscape (at the end of the season)
+
+;to update-landscape-total-crop-loss-for-a-season
+;  set landscape-total-crop-loss-for-a-season  sum [total-crop-loss-for-a-season] of patches with [land-cover = 1]
+;end
+
